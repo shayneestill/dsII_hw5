@@ -1,0 +1,282 @@
+---
+title: 'Data Science II: HW5'
+author: "Shayne Estill"
+date: "05/04/2025"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Libraries
+
+```{r}
+
+# Load libraries
+library(tidyverse)
+library(caret)
+library(ggplot2)  
+library(patchwork)
+library(corrplot)
+library(mgcv)
+library(tidymodels)
+library(earth)
+library(boot) 
+library(table1)
+library(knitr)
+library(pls)
+library(glmnet)
+library(pROC)
+library(pdp)
+library(MASS)
+library(mlbench)
+library(ISLR)
+library(caret)
+library(tidymodels)
+library(e1071) # SVM (implementation used by caret)
+library(kernlab) # alternative SVM engine
+library(ggrepel)
+library(factoextra)
+library(gridExtra)
+library(RColorBrewer)
+library(gplots)
+library(jpeg)
+```
+
+
+1. In this problem, we will apply support vector machines to predict whether a given
+car gets high or low gas mileage based on the dataset “auto.csv” (used in Homework 3; see Homework 3 for more details of the dataset). 
+
+The "auto.csv" dataset contains 392 observations.
+The response variable is “mpg cat”, which indicates whether the miles per gallon of a car is high or low. The predictors include both continuous and categorical variables:
+• cylinders: Number of cylinders between 4 and 8
+• displacement: Engine displacement (cu. inches)
+• horsepower: Engine horsepower
+• weight: Vehicle weight (lbs.)
+• acceleration: Time to accelerate from 0 to 60 mph (sec.)
+• year: Model year (modulo 100)
+• origin: Origin of car (1. American, 2. European, 3. Japanese)
+
+
+The response variable is mpg cat. The predictors are cylinders, displacement, horsepower, weight, acceleration, year, and origin. Split the dataset into two parts: training data (70%) and test data (30%).
+
+```{r}
+# Load auto data
+auto_data = read_csv(file = "/Users/shayneestill/Desktop/Data Science II/dsII_hw5/auto.csv", 
+                        na = c("NA", ".", "")) |>
+                        janitor::clean_names() |>
+  mutate(mpg_cat = factor(mpg_cat, c("high", "low"))) |>
+  mutate(origin = factor(origin, levels = c(1, 2, 3), labels = c("American", "European", "Japanese"))) 
+
+drop_na(auto_data)
+set.seed(0504)
+
+data_split <- initial_split(auto_data, prop = 0.7)
+
+ctrl1 <- trainControl(method = "cv", number = 10)
+
+# Extract the training and test data
+training_data <- training(data_split)
+testing_data <- testing(data_split)
+```
+I changed mpg_cat and origin to factor variables. 
+
+
+(a) Fit a support vector classifier to the training data. What are the training and test error rates?
+
+```{r}
+set.seed(0504)
+linear.tune <- tune.svm(mpg_cat ~ . ,
+data = training_data,
+kernel = "linear",
+cost = exp(seq(-2,2, len = 30)),
+scale = TRUE)
+plot(linear.tune) # tuning curve
+```
+
+```{r}
+set.seed(0504)
+linear.tune$best.parameters
+```
+
+The best tuning parameter is cost = 5.6, and my grid for cost fits within this range well. 
+
+
+```{r}
+set.seed(0504)
+best.linear <- linear.tune$best.model
+summary(best.linear)
+```
+
+```{r}
+set.seed(0504)
+pred.linear <- predict(best.linear, newdata = testing_data)
+confusionMatrix(data = pred.linear,
+reference = testing_data$mpg_cat)
+```
+
+```{r}
+set.seed(0504)
+pred.linear <- predict(best.linear, newdata = training_data)
+confusionMatrix(data = pred.linear,
+reference = training_data$mpg_cat)
+```
+
+The training error rate is 1 - Accuracy = 1 - 0.9161 = 0.0839 = 8.39% training error rate. 
+The test error rate is 1 - Accuracy = 1 - 0.9237 = 0.0763 = 7.63% test error rate. 
+
+
+
+
+
+(b) Fit a support vector machine with a radial kernel to the training data. What are the training and test error rates?
+
+```{r}
+set.seed(0504)
+radial.tune <- tune.svm(mpg_cat ~ . ,
+data = training_data,
+kernel = "radial",
+cost = exp(seq(-5, 8, len = 30)),
+gamma = exp(seq(-13, 3,len = 30)))
+plot(radial.tune, transform.y = log, transform.x = log,
+color.palette = terrain.colors)
+```
+
+```{r}
+set.seed(0504)
+radial.tune$best.parameters
+```
+
+The best tune parameters for cost is 0.01541501 and gamma is 33.69136, therefore our cost and gamma grids fits well and they both lie well within the grids. Additionally, based on the graph, the best performance is in the middle of our grid and not on the edges.
+
+
+```{r}
+set.seed(0504)
+best.radial <- radial.tune$best.model
+summary(best.radial)
+```
+
+```{r}
+set.seed(0504)
+pred.radial <- predict(best.radial, newdata = testing_data)
+confusionMatrix(data = pred.radial,
+reference = testing_data$mpg_cat)
+```
+
+```{r}
+set.seed(0504)
+pred.radial <- predict(best.radial, newdata = training_data)
+confusionMatrix(data = pred.radial,
+reference = training_data$mpg_cat)
+```
+
+The training error is 1 - Accuracy = 1 - 0.9307 = 0.0693 = 6.93% training error. 
+The test error is 1 - Accuracy = 1 - 0.9153 = 0.0847 = 8.47% test error. 
+
+
+
+
+
+
+
+
+2. In this problem, we perform hierarchical clustering on the states using the USArrests data in the ISLR package. For each of the 50 states in the United States, the dataset contains the number of arrests per 100,000 residents for each of three crimes: Assault, Murder, and Rape. The dataset also contains the percent of the population in each state living in urban areas, UrbanPop. The four variables will be used as features for clustering.
+
+(a) Using hierarchical clustering with complete linkage and Euclidean distance, cluster the states. Cut the dendrogram at a height that results in three distinct clusters. Which states belong to which clusters?
+
+```{r}
+set.seed(05042)
+USArrests_unscaled <- USArrests 
+hc.complete_unscaled <- hclust(dist(USArrests_unscaled), method = "complete")
+```
+
+```{r}
+fviz_dend(hc.complete_unscaled, k = 3,
+cex = 0.3,
+palette = "jco", # color scheme; other palettes:"npg","aaas"...
+color_labels_by_k = TRUE,
+rect = TRUE, # whether to add a rectangle around groups.
+rect_fill = TRUE,
+rect_border = "jco",
+labels_track_height = 2.5)
+```
+
+```{r}
+ind4.complete_unscaled <- cutree(hc.complete_unscaled, 1)
+USArrests_unscaled[ind4.complete == 1,]
+```
+
+```{r}
+# display.brewer.all(n = NULL, type = "all", select = NULL, exact.n = TRUE)
+col1 <- colorRampPalette(brewer.pal(9, "GnBu"))(100)
+col2 <- c("yellow","blue4")
+heatmap.2(t(USArrests_unscaled),
+col = col1, keysize=.8, key.par = list(cex=.5),
+trace = "none", key = TRUE, cexCol = 0.75,
+labCol = as.character(USArrests_unscaled[,1]),
+margins = c(10, 10))
+```
+
+
+States with the highest rates of assault on the left cluster (cluster 3). This is Florida, North Carolina, Delaware, Alabama, Louisiana, Alaska, Mississippi, South Carolina, Maryland, Arizona, New Mexico, California, Illinois, New York, Michigan and Nevada. 
+
+States with the lowest rates of assault in the middle cluster (cluster 2). This is Missouri, Arkansas, Tennessee, Georgia, Colorado, Texas, Rhode Island, Wyoming, Oregon, Oklahoma, Virginia, Washington, Massachusetts, and New Jersey. 
+
+States with medium rates of assault on the right cluster (cluster 1). This is Ohio, Utah, Conneticut, Pennsylvania, Nebraska, Kentucky, Montana, Idaho, Indiana, Kansas, Hawaii, Minnesota, Wisconsin, Iowa, New Hampshire, West Virginia, Maine, South Dakota, North Dakota, and Vermont. 
+
+
+
+
+
+(b) Hierarchically cluster the states using complete linkage and Euclidean distance, after scaling the variables to have standard deviation one. Does scaling the variables
+change the clustering results? In your opinion, should the variables be scaled before the inter-observation dissimilarities are computed?
+
+```{r}
+set.seed(05042)
+USArrests_scaled <- scale(USArrests)
+hc.complete_scaled <- hclust(dist(USArrests_scaled), method = "complete")
+```
+
+```{r}
+fviz_dend(hc.complete_scaled, k = 3,
+cex = 0.3,
+palette = "jco", # color scheme; other palettes:"npg","aaas"...
+color_labels_by_k = TRUE,
+rect = TRUE, # whether to add a rectangle around groups.
+rect_fill = TRUE,
+rect_border = "jco",
+labels_track_height = 2.5)
+```
+
+```{r}
+ind4.complete_scaled <- cutree(hc.complete_scaled, 1)
+USArrests_scaled[ind4.complete_scaled == 1,]
+```
+
+```{r}
+# display.brewer.all(n = NULL, type = "all", select = NULL, exact.n = TRUE)
+col1 <- colorRampPalette(brewer.pal(9, "GnBu"))(100)
+col2 <- c("yellow","blue4")
+heatmap.2(t(USArrests_scaled),
+col = col1, keysize=.8, key.par = list(cex=.5),
+trace = "none", key = TRUE, cexCol = 0.75,
+labCol = as.character(USArrests_scaled[,1]),
+margins = c(10, 10))
+```
+
+Does scaling the variables
+change the clustering results? In your opinion, should the variables be scaled before the inter-observation dissimilarities are computed?
+
+Yes, scaling the variables changes the clustering results. It appears that after scaling, the clusters are based on rape, murder, and assault combined and not just assault as in the previous cluster and also were scaled based on their Urban Population size. 
+
+After we scale the variables, we see states with the lowest rates of rape, murder, and assault on the left side (cluster 3). This is South Dakota, West Virginia, North Dakota, Vermont, Maine, Iowa, New Hampshire, Idaho, Montana, Nebraska, Kentucky, Arkansas, Virginia, Wyoming, Missouri, Oregon, Washington, Delaware, Rhode Island, Massachusetts, New Jersey, Connecticut, Minnesota, Wisconsin, Oklahoma, Indiana, Kansas, Ohio, Pennsylvania, Hawaii, and Utah. 
+
+States with high rates of rape, murder, and assault in the middle cluster (cluster 2) are Colorado, California, Nevada, Florida, Texas, Illinois, New York, Arizona, Michigan, Maryland, and New Mexico. 
+
+States with medium rates of rape, murder, and assault in the left cluster (cluster 1) are Alaska, Alabama, Louisiana, Georgia, Tennessee, North Carolina, Mississippi, South Carolina. 
+
+The variables SHOULD be scaled before the inter-observation dissimilarities in order to equally include capture all of the violent crime numbers and not just one. Crimes such as assaults occur much more frequently than rape and murder, but scaling ensures that assaults do not dominate the dendrogram and instead 
+ensure that all variables contribute equally. 
